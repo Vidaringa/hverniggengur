@@ -102,11 +102,23 @@ husnaedisverd_tbl <- read_csv2("https://px.hagstofa.is:443/pxis/sq/e7cdd362-9b81
   mutate(date = fix_date(date))
 
 
+# Stýrivextir
+styrivextir_tbl <- read_csv2("data/meginvextir.csv") |> 
+  set_names("date", "Stýrivextir") |> 
+  mutate(
+    date = floor_date(dmy(date), "month"),
+    Stýrivextir = Stýrivextir / 100
+  ) |> 
+  group_by(date) |> 
+  summarise(Stýrivextir = max(Stýrivextir))
+
+
 # Combine
 data_m_tbl <- vnv_tbl %>% 
   left_join(vmsk_tbl) %>% 
   left_join(husnaedisverd_tbl) %>% 
-  set_names("date", "Verðlag", "Atvinnuleysi", "Hlutfall starfandi", "Fjölbýli (hbs)") %>% 
+  left_join(styrivextir_tbl) |> 
+  set_names("date", "Verðlag", "Atvinnuleysi", "Hlutfall starfandi", "Fjölbýli (hbs)", "Stýrivextir") %>% 
   pivot_longer(cols = -date) %>% 
   drop_na() %>% 
   left_join(rikisstjornir_tbl) %>% 
@@ -157,21 +169,62 @@ radst_tbl <- read_csv2("https://px.hagstofa.is:443/pxis/sq/7c5a4053-f8fd-4549-8b
   select(-c(radstofunartekjur, vnv))
 
 
-# Combine
-data_q_tbl <- gdp_tbl %>% 
-  select(date, gdp_per_capita) %>% 
-  left_join(radst_tbl) %>% 
-  set_names("date", "Landsframleiðsla", "Ráðstöfunartekjur") %>% 
-  pivot_longer(cols = -date) %>% 
-  drop_na() %>% 
-  left_join(rikisstjornir_tbl) %>% 
+# Combine quarterly
+data_q_tbl <- gdp_tbl %>%
+  select(date, gdp_per_capita) %>%
+  left_join(radst_tbl) %>%
+  set_names("date", "Landsframleiðsla", "Ráðstöfunartekjur") %>%
+  pivot_longer(cols = -date) %>%
+  drop_na() %>%
+  left_join(rikisstjornir_tbl) %>%
   drop_na()
+
+
+# 2.2.3 Disaggregate quarterly to monthly and merge with data_m_tbl -------------------------
+
+disagg_to_monthly <- function(df_q, col_name) {
+  df_wide <- df_q %>%
+    filter(name == col_name) %>%
+    select(date, value) %>%
+    drop_na()
+
+  # Convert to ts object (quarterly)
+  start_yr  <- year(min(df_wide$date))
+  start_qtr <- quarter(min(df_wide$date))
+  ts_q <- ts(df_wide$value, start = c(start_yr, start_qtr), frequency = 4)
+
+  # Disaggregate to monthly using denton-cholette (interpolates, does NOT divide by 4)
+  model <- td(ts_q ~ 1, to = "monthly", method = "denton-cholette")
+
+  predict(model) %>%
+    as_tibble() %>%
+    set_names("value") %>%
+    mutate(
+      date = seq.Date(
+        from  = as.Date(paste0(start_yr, "-", sprintf("%02d", (start_qtr - 1) * 3 + 1), "-01")),
+        by    = "month",
+        length.out = n()
+      ),
+      name = col_name
+    ) %>%
+    select(date, name, value)
+}
+
+quarterly_series <- c("Landsframleiðsla", "Ráðstöfunartekjur")
+
+data_q_monthly_tbl <- map(quarterly_series, ~ disagg_to_monthly(data_q_tbl, .x)) %>%
+  bind_rows() %>%
+  left_join(rikisstjornir_tbl) %>%
+  drop_na()
+
+# Combined monthly dataset (original monthly + disaggregated quarterly)
+data_all_m_tbl <- bind_rows(data_m_tbl, data_q_monthly_tbl)
 
 
 
 # 3.0.0 Hvernig gengur ------------------------------------------------------------------------
 
-data_m_tbl %>%
+data_all_m_tbl %>%
   #filter(name == "Verðlag") %>%
   group_by(name, new_name) %>%
   mutate(
@@ -190,12 +243,14 @@ data_m_tbl %>%
 
 
 data_q_tbl %>% 
-  filter(name == "Ráðstöfunartekjur") %>% 
-  group_by(new_name) %>%
+  #filter(name == "Ráðstöfunartekjur") %>% 
+  group_by(name, new_name) %>%
   mutate(
     manudir = row_number(),
     delta = value - value[1]
   ) %>%
   ungroup() %>%
   ggplot(aes(x = manudir, y = delta, col = new_name)) +
-  geom_line()
+  geom_line() +
+  facet_wrap(~ name, scales = "free_y") +
+  theme(legend.position = "bottom")
