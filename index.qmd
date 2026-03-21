@@ -76,11 +76,11 @@ vnv_tbl <- read_csv2("https://px.hagstofa.is:443/pxis/sq/d37f3711-20e0-47ef-924b
   set_names("date", "vnv", "vnvh") |>
   select(-vnvh) |>
   mutate(
-    date = fix_date(date),
-    Verðlag = vnv / lag(vnv, 12) - 1
+    date = fix_date(date)
+    # Verðlag = vnv / lag(vnv, 12) - 1
     ) |> 
-  select(-vnv) |> 
-    drop_na() |> 
+  rename("Verðlag" = "vnv") |> 
+  drop_na() |> 
   pivot_longer(cols = -date)
 
 # Unemployment & employment
@@ -118,13 +118,24 @@ data_m_tbl <-
 ```{r plot}
 # Compute delta from government start, cap at 60 months
 plot_data <- data_m_tbl |>
+  filter(!name == "Verðlag") |> 
   group_by(name, new_name) |>
   mutate(
     manudir = row_number(),
-    delta   = value - value[1]
+    delta   = value - val
   ) |>
   ungroup() |>
-  filter(manudir <= 60)
+  bind_rows(
+    data_m_tbl |> 
+      filter(name == "Verðlag") |> 
+
+  group_by(new_name) |> 
+  mutate(
+    manudir = row_number(),
+    delta = value / value[1] - 1
+  )
+  ) |> 
+    filter(manudir <= 60)
 
 # Stable color palette per government period
 gov_levels <- plot_data |>
