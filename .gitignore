@@ -1,0 +1,24 @@
+# Quarto build artifacts
+/.quarto/
+*_files/
+*_cache/
+/docs
+
+# Rendered output (track docs/ for GitHub Pages, ignore everything else)
+# If you want to commit docs/, remove the next line
+# docs/
+
+# R artifacts
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# Positron / VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+**/*.quarto_ipynb

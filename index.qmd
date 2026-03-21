@@ -1,0 +1,281 @@
+---
+title: "Hvernig gengur?"
+subtitle: "Efnahagsleg þróun frá upphafi hverrar ríkisstjórnar"
+format:
+  html:
+    theme: cosmo
+    toc: false
+    self-contained: true
+    page-layout: full
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(zoo)
+library(timetk)
+library(plotly)
+```
+
+```{r data}
+# Helper
+fix_date <- function(string, quarterly = FALSE) {
+  if (quarterly) {
+    temp_string <- str_replace(string, "Á", "Q")
+    date(as.yearqtr(temp_string))
+  } else {
+    make_date(str_sub(string, 1, 4), str_sub(string, 6, 7))
+  }
+}
+
+# Ríkisstjórnir
+rikisstjornir_tbl <- tibble(
+  date = as.Date(c(
+    "2024-12-21",
+    "2024-04-09",
+    "2021-11-28",
+    "2017-11-30",
+    "2017-01-11",
+    "2016-04-07",
+    "2013-05-23",
+    "2009-02-01",
+    "2007-05-24",
+    "1995-04-23"
+  )),
+  government = c(
+    "Samfylkingin, Viðreisn, Flokkur fólksins",
+    "Sjálfstæðisflokkur, Framsókn, Vinstri græn",
+    "Sjálfstæðisflokkur, Framsókn, Vinstri græn",
+    "Sjálfstæðisflokkur, Framsókn, Vinstri græn",
+    "Sjálfstæðisflokkur, Viðreisn, Björt framtíð",
+    "Sjálfstæðisflokkur, Framsókn, Viðreisn, Björt framtíð",
+    "Sjálfstæðisflokkur, Framsókn",
+    "Samfylkingin, Vinstri græn",
+    "Sjálfstæðisflokkur, Samfylkingin",
+    "Sjálfstæðisflokkur, Framsóknarflokkur"
+  )
+) |>
+  mutate(date = floor_date(date, "month")) |>
+  arrange(date) |>
+  pad_by_time(.date_var = date, .by = "month") |>
+  fill(government, .direction = "down") |>
+  mutate(change_flag = government != lag(government, default = first(government))) |>
+  mutate(period_group = cumsum(change_flag)) |>
+  group_by(government, period_group) |>
+  mutate(new_name = paste0(government, "\n(", min(date), " – ", max(date), ")")) |>
+  ungroup() |>
+  select(-c(change_flag, period_group))
+
+# CPI
+vnv_tbl <- read_csv2("https://px.hagstofa.is:443/pxis/sq/d37f3711-20e0-47ef-924b-8691f3cb6f11") |>
+  set_names("date", "vnv", "vnvh") |>
+  select(-vnvh) |>
+  mutate(date = fix_date(date), vnv = vnv / 10)
+
+# Unemployment & employment
+vmsk_tbl <- read_csv2("https://px.hagstofa.is:443/pxis/sq/8b9531d3-8044-4da0-80c4-d3e25bda3de5") |>
+  set_names("date", "mannfjoldi", "atvinnulausir", "starfandi") |>
+  mutate(
+    atvinnuleysi = atvinnulausir / mannfjoldi,
+    epop         = starfandi / mannfjoldi,
+    date         = fix_date(date)
+  ) |>
+  select(date, atvinnuleysi, epop)
+
+# Interest rates (local)
+styrivextir_tbl <- read_csv2("data/meginvextir.csv") |>
+  set_names("date", "Stýrivextir") |>
+  mutate(
+    date        = floor_date(dmy(date), "month"),
+    Stýrivextir = Stýrivextir / 100
+  ) |>
+  group_by(date) |>
+  summarise(Stýrivextir = max(Stýrivextir))
+
+# Combine → long format
+data_m_tbl <- vnv_tbl |>
+  left_join(vmsk_tbl, by = "date") |>
+  left_join(styrivextir_tbl, by = "date") |>
+  set_names("date", "Verðlag", "Atvinnuleysi", "Hlutfall starfandi", "Stýrivextir") |>
+  pivot_longer(cols = -date) |>
+  drop_na() |>
+  left_join(rikisstjornir_tbl, by = "date") |>
+  drop_na()
+```
+
+```{r plot}
+# Compute delta from government start, cap at 60 months
+plot_data <- data_m_tbl |>
+  group_by(name, new_name) |>
+  mutate(
+    manudir = row_number(),
+    delta   = value - value[1]
+  ) |>
+  ungroup() |>
+  filter(manudir <= 60)
+
+# Stable color palette per government period
+gov_levels <- plot_data |>
+  distinct(new_name) |>
+  arrange(new_name) |>
+  pull(new_name)
+
+palette <- c(
+  "#4E79A7", "#F28E2B", "#E15759", "#76B7B2",
+  "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7",
+  "#9C755F", "#BAB0AC"
+)
+color_map <- setNames(palette[seq_along(gov_levels)], gov_levels)
+
+indicators <- unique(plot_data$name)
+
+# Build one trace per government × indicator; visibility toggled by buttons
+fig <- plot_ly()
+
+for (ind in indicators) {
+  df_ind <- plot_data |> filter(name == ind)
+  for (gov in gov_levels) {
+    df_g <- df_ind |> filter(new_name == gov)
+    if (nrow(df_g) == 0) next
+
+    # Format tooltip nicely
+    y_fmt <- if (ind %in% c("Atvinnuleysi", "Hlutfall starfandi", "Stýrivextir")) {
+      scales::label_percent(accuracy = 0.1)(df_g$delta)
+    } else {
+      round(df_g$delta, 2)
+    }
+
+    hover_txt <- paste0(
+      "<b>", str_wrap(gov, width = 40) |> str_replace_all("\n", "<br>"), "</b><br>",
+      "Mánuður: ", df_g$manudir, "<br>",
+      "Breyting: ", y_fmt
+    )
+
+    fig <- fig |> add_trace(
+      x           = df_g$manudir,
+      y           = df_g$delta,
+      type        = "scatter",
+      mode        = "lines",
+      name        = gov,
+      text        = hover_txt,
+      hoverinfo   = "text",
+      line        = list(color = color_map[gov], width = 2),
+      visible     = (ind == indicators[1]),
+      showlegend  = (ind == indicators[1]),
+      legendgroup = gov
+    )
+  }
+}
+
+# Count traces per indicator (for visibility toggle)
+traces_per_ind <- map_int(indicators, function(ind) {
+  n_govs <- plot_data |> filter(name == ind) |> distinct(new_name) |> nrow()
+  n_govs
+})
+total_traces <- sum(traces_per_ind)
+
+# Build updatemenus buttons
+make_visibility <- function(active_idx) {
+  vis        <- vector("list", total_traces)
+  showlegend <- vector("list", total_traces)
+  start <- 1
+  for (i in seq_along(indicators)) {
+    n <- traces_per_ind[i]
+    for (j in seq_len(n)) {
+      vis[[start + j - 1]]        <- (i == active_idx)
+      showlegend[[start + j - 1]] <- (i == active_idx)
+    }
+    start <- start + n
+  }
+  list(visible = vis, showlegend = showlegend)
+}
+
+# Y-axis titles per indicator
+yaxis_titles <- c(
+  "Verðlag"            = "Breyting á vísitölu (stig)",
+  "Atvinnuleysi"       = "Breyting (prósentustig)",
+  "Hlutfall starfandi" = "Breyting (prósentustig)",
+  "Stýrivextir"        = "Breyting (prósentustig)"
+)
+
+buttons <- map(seq_along(indicators), function(i) {
+  vis <- make_visibility(i)
+  list(
+    method = "update",
+    args   = list(
+      list(visible = vis$visible, showlegend = vis$showlegend),
+      list(
+        yaxis = list(title = list(text = yaxis_titles[indicators[i]], font = list(size = 12))),
+        title = list(text = paste0("<b>", indicators[i], "</b>"), font = list(size = 18))
+      )
+    ),
+    label  = indicators[i]
+  )
+})
+
+fig <- fig |>
+  layout(
+    title = list(
+      text = paste0("<b>", indicators[1], "</b>"),
+      font = list(size = 18, color = "#333333"),
+      x    = 0.05
+    ),
+    xaxis = list(
+      title      = list(text = "Mánuðir frá upphafi ríkisstjórnar", font = list(size = 12)),
+      showgrid   = TRUE,
+      gridcolor  = "#eeeeee",
+      zeroline   = FALSE,
+      tickfont   = list(size = 11)
+    ),
+    yaxis = list(
+      title      = list(text = yaxis_titles[indicators[1]], font = list(size = 12)),
+      showgrid   = TRUE,
+      gridcolor  = "#eeeeee",
+      zeroline   = TRUE,
+      zerolinecolor = "#cccccc",
+      zerolinewidth = 1.5,
+      tickfont   = list(size = 11)
+    ),
+    legend = list(
+      orientation = "v",
+      x           = 1.01,
+      y           = 1,
+      font        = list(size = 10),
+      bgcolor     = "rgba(255,255,255,0.8)",
+      bordercolor = "#dddddd",
+      borderwidth = 1
+    ),
+    updatemenus = list(list(
+      type       = "buttons",
+      direction  = "right",
+      x          = 0.0,
+      xanchor    = "left",
+      y          = 1.12,
+      yanchor    = "top",
+      buttons    = buttons,
+      bgcolor    = "#f5f5f5",
+      bordercolor = "#cccccc",
+      font       = list(size = 12),
+      pad        = list(r = 6, t = 4, b = 4, l = 6)
+    )),
+    plot_bgcolor  = "#ffffff",
+    paper_bgcolor = "#ffffff",
+    margin        = list(t = 100, r = 220, b = 60, l = 60),
+    hovermode     = "closest"
+  ) |>
+  config(
+    displayModeBar = FALSE,
+    responsive     = TRUE
+  )
+
+fig$width  <- "100%"
+fig$height <- 700
+fig
+```
+
+::: {style="color: #888; font-size: 0.8rem; margin-top: 1.5rem;"}
+**Heimild:** Hagstofa Íslands og Seðlabanki Íslands. Gögn eru mánaðarleg. Y-ásinn sýnir breytingu frá fyrsta mánuði hverrar ríkisstjórnar. Hámark 60 mánuðir.
+:::
