@@ -54,10 +54,10 @@ rikisstjornir_tbl <- tibble(
     "Sjálfstæðisflokkur, Samfylkingin",
     "Sjálfstæðisflokkur, Framsóknarflokkur"
   )
-) |> 
-  mutate(date = floor_date(date, "month")) |> 
-  arrange(date) |> 
-  pad_by_time(.date_var = date, .by = "month") |> 
+) |>
+  mutate(date = floor_date(date, "month")) |>
+  arrange(date) |>
+  pad_by_time(.date_var = date, .by = "month") |>
   fill(government, .direction = "down")
 
 # Núvernadi ríkisstjórn

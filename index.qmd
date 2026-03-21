@@ -34,6 +34,7 @@ fix_date <- function(string, quarterly = FALSE) {
 # Ríkisstjórnir
 rikisstjornir_tbl <- tibble(
   date = as.Date(c(
+    "2028-12-01",  # Framtíðardagsetning til að framlengja tímalínu
     "2024-12-21",
     "2024-04-09",
     "2021-11-28",
@@ -46,6 +47,7 @@ rikisstjornir_tbl <- tibble(
     "1995-04-23"
   )),
   government = c(
+    "Samfylkingin, Viðreisn, Flokkur fólksins",
     "Samfylkingin, Viðreisn, Flokkur fólksins",
     "Sjálfstæðisflokkur, Framsókn, Vinstri græn",
     "Sjálfstæðisflokkur, Framsókn, Vinstri græn",
