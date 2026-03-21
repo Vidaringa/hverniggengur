@@ -223,7 +223,7 @@ fig <- fig |>
     title = list(
       text = paste0("<b>", indicators[1], "</b>"),
       font = list(size = 18, color = "#333333"),
-      x    = 0.05
+      x    = 0.5, xanchor = "center"
     ),
     xaxis = list(
       title      = list(text = "Mánuðir frá upphafi ríkisstjórnar", font = list(size = 12)),
