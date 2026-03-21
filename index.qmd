@@ -99,8 +99,8 @@ styrivextir_tbl <- read_csv2("data/meginvextir.csv") |>
 
 # Combine → long format
 data_m_tbl <- vnv_tbl |>
-  left_join(vmsk_tbl, by = "date") |>
-  left_join(styrivextir_tbl, by = "date") |>
+  full_join(vmsk_tbl, by = "date") |>
+  full_join(styrivextir_tbl, by = "date") |>
   set_names("date", "Verðlag", "Atvinnuleysi", "Hlutfall starfandi", "Stýrivextir") |>
   pivot_longer(cols = -date) |>
   drop_na() |>
