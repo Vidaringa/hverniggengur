@@ -2,7 +2,6 @@
 /.quarto/
 *_files/
 *_cache/
-/docs
 
 # Rendered output (track docs/ for GitHub Pages, ignore everything else)
 # If you want to commit docs/, remove the next line
