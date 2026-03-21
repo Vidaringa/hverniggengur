@@ -57,7 +57,7 @@ rikisstjornir_tbl <- tibble(
     "Sjálfstæðisflokkur, Framsókn",
     "Samfylkingin, Vinstri græn",
     "Sjálfstæðisflokkur, Samfylkingin",
-    "Sjálfstæðisflokkur, Framsóknarflokkur"
+    "Sjálfstæðisflokkur, Framsókn"
   )
 ) |>
   mutate(date = floor_date(date, "month")) |>
@@ -122,7 +122,7 @@ plot_data <- data_m_tbl |>
   group_by(name, new_name) |>
   mutate(
     manudir = row_number(),
-    delta   = value - val
+    delta   = value - value[1]
   ) |>
   ungroup() |>
   bind_rows(
@@ -160,11 +160,7 @@ precomputed <- map(indicators, function(ind) {
     if (nrow(df_g) == 0) {
       list(x = list(NA), y = list(NA), text = list(""))
     } else {
-      y_fmt <- if (ind %in% c("Atvinnuleysi", "Hlutfall starfandi", "Stýrivextir")) {
-        scales::label_percent(accuracy = 0.1)(df_g$delta)
-      } else {
-        round(df_g$delta, 2)
-      }
+      y_fmt <- scales::label_percent(accuracy = 0.1)(df_g$delta)
       hover_txt <- paste0(
         "<b>", str_wrap(gov, width = 40) |> str_replace_all("\n", "<br>"), "</b><br>",
         "Mánuður: ", df_g$manudir, "<br>",
@@ -216,7 +212,7 @@ buttons <- map(seq_along(indicators), function(idx) {
         text = map(dat, ~ .x$text)
       ),
       list(
-        yaxis = list(title = list(text = yaxis_titles[ind], font = list(size = 12))),
+        yaxis = list(title = list(text = yaxis_titles[ind], font = list(size = 12)), tickformat = ".1%"),
         title = list(text = paste0("<b>", ind, "</b>"), font = list(size = 18))
       )
     ),
@@ -245,6 +241,7 @@ fig <- fig |>
       zeroline   = TRUE,
       zerolinecolor = "#cccccc",
       zerolinewidth = 1.5,
+      tickformat = ".1%",
       tickfont   = list(size = 11)
     ),
     legend = list(
