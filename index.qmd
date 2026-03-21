@@ -75,17 +75,23 @@ rikisstjornir_tbl <- tibble(
 vnv_tbl <- read_csv2("https://px.hagstofa.is:443/pxis/sq/d37f3711-20e0-47ef-924b-8691f3cb6f11") |>
   set_names("date", "vnv", "vnvh") |>
   select(-vnvh) |>
-  mutate(date = fix_date(date), vnv = vnv / 10)
+  mutate(
+    date = fix_date(date),
+    Verðlag = vnv / lag(vnv, 12) - 1
+    ) |> 
+  select(-vnv) |> 
+    drop_na() |> 
+  pivot_longer(cols = -date)
 
 # Unemployment & employment
 vmsk_tbl <- read_csv2("https://px.hagstofa.is:443/pxis/sq/8b9531d3-8044-4da0-80c4-d3e25bda3de5") |>
   set_names("date", "mannfjoldi", "atvinnulausir", "starfandi") |>
-  mutate(
-    atvinnuleysi = atvinnulausir / mannfjoldi,
-    epop         = starfandi / mannfjoldi,
-    date         = fix_date(date)
-  ) |>
-  select(date, atvinnuleysi, epop)
+  transmute(
+    "Atvinnuleysi" = atvinnulausir / mannfjoldi,
+    `Hlutfall starfandi` = starfandi / mannfjoldi,
+    date = fix_date(date)
+  ) |> 
+  pivot_longer(cols = -date)
 
 # Interest rates (local)
 styrivextir_tbl <- read_csv2("data/meginvextir.csv") |>
@@ -95,15 +101,16 @@ styrivextir_tbl <- read_csv2("data/meginvextir.csv") |>
     Stýrivextir = Stýrivextir / 100
   ) |>
   group_by(date) |>
-  summarise(Stýrivextir = max(Stýrivextir))
+  summarise(Stýrivextir = max(Stýrivextir)) |> 
+  pivot_longer(cols = -date)
 
 # Combine → long format
-data_m_tbl <- vnv_tbl |>
-  full_join(vmsk_tbl, by = "date") |>
-  full_join(styrivextir_tbl, by = "date") |>
-  set_names("date", "Verðlag", "Atvinnuleysi", "Hlutfall starfandi", "Stýrivextir") |>
-  pivot_longer(cols = -date) |>
-  drop_na() |>
+data_m_tbl <-
+  bind_rows(
+    vnv_tbl,
+    vmsk_tbl,
+    styrivextir_tbl
+  ) |> 
   left_join(rikisstjornir_tbl, by = "date") |>
   drop_na()
 ```
@@ -134,65 +141,47 @@ color_map <- setNames(palette[seq_along(gov_levels)], gov_levels)
 
 indicators <- unique(plot_data$name)
 
-# Build one trace per government × indicator; visibility toggled by buttons
+# Pre-compute data for each indicator × government
+precomputed <- map(indicators, function(ind) {
+  df_ind <- plot_data |> filter(name == ind)
+  map(gov_levels, function(gov) {
+    df_g <- df_ind |> filter(new_name == gov)
+    if (nrow(df_g) == 0) {
+      list(x = list(NA), y = list(NA), text = list(""))
+    } else {
+      y_fmt <- if (ind %in% c("Atvinnuleysi", "Hlutfall starfandi", "Stýrivextir")) {
+        scales::label_percent(accuracy = 0.1)(df_g$delta)
+      } else {
+        round(df_g$delta, 2)
+      }
+      hover_txt <- paste0(
+        "<b>", str_wrap(gov, width = 40) |> str_replace_all("\n", "<br>"), "</b><br>",
+        "Mánuður: ", df_g$manudir, "<br>",
+        "Breyting: ", y_fmt
+      )
+      list(x = as.list(df_g$manudir), y = as.list(df_g$delta), text = as.list(hover_txt))
+    }
+  })
+})
+names(precomputed) <- indicators
+
+# Build one trace per government (data swapped by buttons, legend state preserved)
 fig <- plot_ly()
 
-for (ind in indicators) {
-  df_ind <- plot_data |> filter(name == ind)
-  for (gov in gov_levels) {
-    df_g <- df_ind |> filter(new_name == gov)
-    if (nrow(df_g) == 0) next
-
-    # Format tooltip nicely
-    y_fmt <- if (ind %in% c("Atvinnuleysi", "Hlutfall starfandi", "Stýrivextir")) {
-      scales::label_percent(accuracy = 0.1)(df_g$delta)
-    } else {
-      round(df_g$delta, 2)
-    }
-
-    hover_txt <- paste0(
-      "<b>", str_wrap(gov, width = 40) |> str_replace_all("\n", "<br>"), "</b><br>",
-      "Mánuður: ", df_g$manudir, "<br>",
-      "Breyting: ", y_fmt
-    )
-
-    fig <- fig |> add_trace(
-      x           = df_g$manudir,
-      y           = df_g$delta,
-      type        = "scatter",
-      mode        = "lines",
-      name        = gov,
-      text        = hover_txt,
-      hoverinfo   = "text",
-      line        = list(color = color_map[gov], width = 2),
-      visible     = (ind == indicators[1]),
-      showlegend  = (ind == indicators[1]),
-      legendgroup = gov
-    )
-  }
-}
-
-# Count traces per indicator (for visibility toggle)
-traces_per_ind <- map_int(indicators, function(ind) {
-  n_govs <- plot_data |> filter(name == ind) |> distinct(new_name) |> nrow()
-  n_govs
-})
-total_traces <- sum(traces_per_ind)
-
-# Build updatemenus buttons
-make_visibility <- function(active_idx) {
-  vis        <- vector("list", total_traces)
-  showlegend <- vector("list", total_traces)
-  start <- 1
-  for (i in seq_along(indicators)) {
-    n <- traces_per_ind[i]
-    for (j in seq_len(n)) {
-      vis[[start + j - 1]]        <- (i == active_idx)
-      showlegend[[start + j - 1]] <- (i == active_idx)
-    }
-    start <- start + n
-  }
-  list(visible = vis, showlegend = showlegend)
+for (i in seq_along(gov_levels)) {
+  gov  <- gov_levels[i]
+  init <- precomputed[[indicators[1]]][[i]]
+  fig <- fig |> add_trace(
+    x           = init$x,
+    y           = init$y,
+    type        = "scatter",
+    mode        = "lines",
+    name        = gov,
+    text        = init$text,
+    hoverinfo   = "text",
+    line        = list(color = color_map[gov], width = 2),
+    legendgroup = gov
+  )
 }
 
 # Y-axis titles per indicator
@@ -203,18 +192,24 @@ yaxis_titles <- c(
   "Stýrivextir"        = "Breyting (prósentustig)"
 )
 
-buttons <- map(seq_along(indicators), function(i) {
-  vis <- make_visibility(i)
+# Build updatemenus buttons (swap data, not visibility)
+buttons <- map(seq_along(indicators), function(idx) {
+  ind <- indicators[idx]
+  dat <- precomputed[[ind]]
   list(
     method = "update",
     args   = list(
-      list(visible = vis$visible, showlegend = vis$showlegend),
       list(
-        yaxis = list(title = list(text = yaxis_titles[indicators[i]], font = list(size = 12))),
-        title = list(text = paste0("<b>", indicators[i], "</b>"), font = list(size = 18))
+        x    = map(dat, ~ .x$x),
+        y    = map(dat, ~ .x$y),
+        text = map(dat, ~ .x$text)
+      ),
+      list(
+        yaxis = list(title = list(text = yaxis_titles[ind], font = list(size = 12))),
+        title = list(text = paste0("<b>", ind, "</b>"), font = list(size = 18))
       )
     ),
-    label  = indicators[i]
+    label = ind
   )
 })
 

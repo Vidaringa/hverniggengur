@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:plotly.com)",
+      "Bash(quarto render:*)",
+      "Bash(where quarto:*)",
+      "Read(//c/Users/vidar/AppData/Local/Programs/Quarto/bin/**)",
+      "Read(//c/Program Files/Quarto/bin/**)",
+      "Bash(cmd.exe /c \"where quarto\")",
+      "Bash(cmd.exe /c \"quarto render index.qmd\")",
+      "Bash(cmd.exe /c \"quarto render index.qmd 2>&1\")",
+      "Bash(cmd.exe /c \"quarto render index.qmd && echo SUCCESS || echo FAILED\")",
+      "Bash(powershell.exe -Command \"quarto render index.qmd 2>&1 | Out-String\")",
+      "Bash(\"/c/Program Files/Positron/resources/app/quarto/bin/quarto.exe\" render index.qmd)"
+    ]
+  }
+}
